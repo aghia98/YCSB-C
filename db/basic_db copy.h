@@ -20,62 +20,9 @@
 using std::cout;
 using std::endl;
 
-//################################################################################################
-#include "../../gRPC_module/grpc_client.h"
-
-using namespace std;
+using std::map;
+using std::string;
 map<string, string> myMap;
-//################################################################################################
-
-class KVSClient {
- public:
-  KVSClient(std::shared_ptr<Channel> channel): stub_(keyvaluestore::KVS::NewStub(channel)) {}
-
-  string Get(const string k) {
-    keyvaluestore::Key key;
-    key.set_key(k);
-
-    keyvaluestore::Value reply;
-
-    grpc::ClientContext context;
-
-    grpc::Status status = stub_->Get(&context, key, &reply);
-
-    // Act upon its status.
-    if (status.ok()) {
-      return reply.value();
-    } else {
-      std::cout << status.error_code() << ": " << status.error_message()
-                << std::endl;
-      return "RPC failed";
-    }
-  }
-
-  string Put(const string k, const string v) {
-    // Follows the same pattern as SayHello.
-    keyvaluestore::KV_pair request;
-    request.set_key(k);
-    request.set_value(v);
-    keyvaluestore::Value reply;
-    ClientContext context;
-
-    // Here we can use the stub's newly available method we just added.
-    Status status = stub_->Put(&context, request, &reply);
-    if (status.ok()) {
-      return reply.value();
-    } else {
-      cout << status.error_code() << ": " << status.error_message()
-                << endl;
-      return "RPC failed";
-    }
-  }
-
- private:
-  unique_ptr<keyvaluestore::KVS::Stub> stub_;
-};
-
-int cpt = 0;
-
 
 namespace ycsbc {
 
@@ -100,7 +47,7 @@ class BasicDB : public DB {
     } else {
       cout  << " < all fields >" << endl;
     }*/
-    cout << myMap["yesss33"] << endl;
+    cout << myMap["hellllo"] << endl;
     return 0;
   }
 
@@ -141,21 +88,7 @@ class BasicDB : public DB {
       cout << v.first << '=' << v.second << ' ';
     }
     cout << ']' << endl; */
-    cpt++;
-    //myMap["yesss"+to_string(cpt)] = "aghiles.ait-messaoud@insa-lyon.frqsqqqqqqqqqqqqqqsssssssss";
-    
-    string reply;
-    KVSClient* kvs;
-    string k,v;
-    kvs = new KVSClient(grpc::CreateChannel("localhost:50001", grpc::InsecureChannelCredentials()));
-    k= "yesss"+to_string(cpt);
-    v = "aghiles.ait-messaoud@insa-lyon.frqsqqqqqqqqqqqqqqsssssssss";
-    reply = kvs->Put(k,v);
-    delete kvs;
-    cout << "Result: " << reply << endl;
-    
-    //cout << cpt << endl;
-
+    myMap["hellllo"] = "hallllo";
     return 0;
   }
 
