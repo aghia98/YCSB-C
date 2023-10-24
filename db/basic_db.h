@@ -70,6 +70,22 @@ class KVSClient {
     }
   }
 
+  string Delete(const string key){
+        ClientContext context;
+        keyvaluestore::Key request;
+        request.set_key(key);
+        keyvaluestore::Value reply;
+
+        Status status = stub_->Delete(&context, request, &reply);
+
+        if (status.ok()) {
+            return reply.value();
+        } else {
+            cout << status.error_code() << ": " << status.error_message() << endl;
+            return "RPC failed";
+        }
+    }
+
  private:
   unique_ptr<keyvaluestore::KVS::Stub> stub_;
 };
@@ -89,79 +105,85 @@ class BasicDB : public DB {
   int Read(const std::string &table, const std::string &key,
            const std::vector<std::string> *fields,
            std::vector<KVPair> &result) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    /*cout << "READ " << table << ' ' << key;
-    if (fields) {
-      cout << " [ ";
-      for (auto f : *fields) {
-        cout << f << ' ';
-      }
-      cout << ']' << endl;
-    } else {
-      cout  << " < all fields >" << endl;
-    }*/
-    cout << myMap["yesss33"] << endl;
+
+    KVSClient* kvs;
+    string share = "";
+    kvs = new KVSClient(grpc::CreateChannel("localhost:50001", grpc::InsecureChannelCredentials()));
+    share = kvs->Get(key);
+    cout << "Got share" << " : " << share << endl;
+    delete kvs;
+
     return 0;
   }
 
   int Scan(const std::string &table, const std::string &key,
            int len, const std::vector<std::string> *fields,
            std::vector<std::vector<KVPair>> &result) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    cout << "SCAN " << table << ' ' << key << " " << len;
-    if (fields) {
-      cout << " [ ";
-      for (auto f : *fields) {
-        cout << f << ' ';
-      }
-      cout << ']' << endl;
-    } else {
-      cout  << " < all fields >" << endl;
-    }
-    return 0;
+
+      return 0;
+    
   }
 
   int Update(const std::string &table, const std::string &key,
              std::vector<KVPair> &values) {
+    
+    //Insert(table, key, values);
+    
+    string reply;
+    KVSClient* kvs;
+    string k,v;
+    kvs = new KVSClient(grpc::CreateChannel("localhost:50001", grpc::InsecureChannelCredentials()));
+    //k= "yesss"+to_string(cpt);
+    k = key;
+    //v = "aghiles.ait-messaoud@insa-lyon.frqsqqqqqqqqqqqqqqsssssssss";
+    v = values[0].second;
     std::lock_guard<std::mutex> lock(mutex_);
-    cout << "UPDATE " << table << ' ' << key << " [ ";
-    for (auto v : values) {
-      cout << v.first << '=' << v.second << ' ';
-    }
-    cout << ']' << endl;
+    reply = kvs->Put(k,v);
+    delete kvs;
+    cpt++;
+    //cout << "Result: " << reply << endl;
+    cout << cpt << endl;
+
     return 0;
   }
 
-//INSERT usertable user12109387703120580018 [ field0=)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) ]
+
   int Insert(const std::string &table, const std::string &key,
              std::vector<KVPair> &values) { 
-    std::lock_guard<std::mutex> lock(mutex_);
-    /*cout << "INSERT " << table << ' ' << key << " [ ";
-    for (auto v : values) {
-      cout << v.first << '=' << v.second << ' ';
-    }
-    cout << ']' << endl; */
-    cpt++;
+    
+    
     //myMap["yesss"+to_string(cpt)] = "aghiles.ait-messaoud@insa-lyon.frqsqqqqqqqqqqqqqqsssssssss";
     
     string reply;
     KVSClient* kvs;
     string k,v;
     kvs = new KVSClient(grpc::CreateChannel("localhost:50001", grpc::InsecureChannelCredentials()));
-    k= "yesss"+to_string(cpt);
-    v = "aghiles.ait-messaoud@insa-lyon.frqsqqqqqqqqqqqqqqsssssssss";
+    //k= "yesss"+to_string(cpt);
+    k = key;
+    //v = "aghiles.ait-messaoud@insa-lyon.frqsqqqqqqqqqqqqqqsssssssss";
+    v = values[0].second;
     reply = kvs->Put(k,v);
     delete kvs;
-    cout << "Result: " << reply << endl;
-    
-    //cout << cpt << endl;
+    cpt++;
+    //cout << "Result: " << reply << endl;
+    cout << cpt << endl;
 
     return 0;
   }
 
   int Delete(const std::string &table, const std::string &key) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    cout << "DELETE " << table << ' ' << key << endl;
+    string reply;
+    KVSClient* kvs;
+    string k,v;
+    kvs = new KVSClient(grpc::CreateChannel("localhost:50001", grpc::InsecureChannelCredentials()));
+    //k= "yesss"+to_string(cpt);
+    k = key;
+    reply = kvs->Delete(k);
+    delete kvs;
+    cpt++;
+    //cout << "Result: " << reply << endl;
+    cout << cpt << endl;
+
     return 0; 
   }
 
