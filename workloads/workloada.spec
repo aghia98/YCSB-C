@@ -9,9 +9,9 @@
 recordcount=2000
 
 fieldcount=1
-fieldlength=20
+fieldlength=128
 
-operationcount=2000
+operationcount=10000 #5000 updates vs 5000 gets
 workload=com.yahoo.ycsb.workloads.CoreWorkload
 
 readallfields=false

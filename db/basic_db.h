@@ -159,7 +159,7 @@ map<int, string> parse_json(const string& file_location){
 
 }
 
-void transmit_shares(string k, char** shares, vector<int> x_shares){ //the share (x_share, y_share) is sent to node port offset+x_share
+/*void transmit_shares(string k, char** shares, vector<int> x_shares){ //the share (x_share, y_share) is sent to node port offset+x_share
   string v;
   string reply;
   KVSClient* kvs;
@@ -174,14 +174,28 @@ void transmit_shares(string k, char** shares, vector<int> x_shares){ //the share
     //cout << "Result: " << reply << endl;
     i++;
     //printf("\n");
+    if(i==1) break;
+    delete kvs;
+  }
+}*/
 
+void transmit_shares_replica(string k, char** shares, string& value){ //the share (x_share, y_share) is sent to node port offset+x_share
+  string v;
+  string reply;
+  KVSClient* kvs;
+  int i=0;
+
+  for(int i = 0; i<n; i++){
+    kvs = new KVSClient(grpc::CreateChannel(id_to_address_map[i+1]+":"+to_string(default_sms_port) , grpc::InsecureChannelCredentials()));
+    v = value;
+    reply = kvs->Put(k,v);
+    if(i==n) break;
     delete kvs;
   }
 }
 
-/*void async_transmit_shares(string k, char** shares, vector<int> x_shares, string ip_address){ //the share (x_share, y_share) is sent to node port offset+x_share
+void async_transmit_shares(string k, char** shares, vector<int> x_shares){ //the share (x_share, y_share) is sent to node port offset+x_share
   string v;
-  string fixed = ip_address+":";
   string reply;
   KVSClient* kvs;
   int i=0;
@@ -196,7 +210,7 @@ void transmit_shares(string k, char** shares, vector<int> x_shares){ //the share
   for (int i = 0; i < x_shares.size(); i++){
     request.set_key(k);
     request.set_value(shares[i]);
-    stub = keyvaluestore::KVS::NewStub(grpc::CreateChannel(fixed+id_to_address_map[x_shares[i]] , grpc::InsecureChannelCredentials()));
+    stub = keyvaluestore::KVS::NewStub(grpc::CreateChannel(id_to_address_map[x_shares[i]]+":"+to_string(default_sms_port), grpc::InsecureChannelCredentials()));
     rpc = stub->AsyncPut(&contexts[i], request, &cq);
     rpc->Finish(&responses[i], &statuses[i], (void*)(i+1));
   }
@@ -218,7 +232,50 @@ void transmit_shares(string k, char** shares, vector<int> x_shares){ //the share
     }
   }
 
-}*/
+}
+
+void async_transmit_shares_replica(string k, char** shares, vector<int> x_shares, string& value){ //the share (x_share, y_share) is sent to node port offset+x_share
+  string v;
+  string reply;
+  KVSClient* kvs;
+  int i=0;
+  
+  CompletionQueue cq;
+  unique_ptr<keyvaluestore::KVS::Stub> stub;
+  vector<ClientContext> contexts(n);
+  std::unique_ptr<grpc::ClientAsyncResponseReader<keyvaluestore::Value>> rpc;
+  keyvaluestore::KV_pair request;
+  vector<keyvaluestore::Value> responses(n);
+  vector<Status> statuses(n);
+  for (int i = 0; i < n; i++){
+    request.set_key(k);
+    request.set_value(value);
+    stub = keyvaluestore::KVS::NewStub(grpc::CreateChannel(id_to_address_map[i+1]+":"+to_string(default_sms_port), grpc::InsecureChannelCredentials()));
+    rpc = stub->AsyncPut(&contexts[i], request, &cq);
+    rpc->Finish(&responses[i], &statuses[i], (void*)(i+1));
+
+    //if(i==0) break;
+  }
+  int num_responses_received = 0;
+  while (num_responses_received < n){
+    void* got_tag;
+    bool ok = false;
+    cq.Next(&got_tag, &ok);
+    if (ok){
+      int response_index = reinterpret_cast<intptr_t>(got_tag) - 1;
+      /*if (statuses[response_index].ok()) {
+        //cout << "Share transmitted to node id = " << x_shares[response_index] << ": " << endl;
+        //cout << shares[response_index] << endl;
+        //printf("\n");
+      } else {
+
+      }*/
+      num_responses_received++;
+      //if(num_responses_received = 1) break;
+    }
+  }
+
+}
 
 string get_shares(vector<int> ids_of_N_active, string secret_id, int t){
     int port;
@@ -245,12 +302,11 @@ string get_shares(vector<int> ids_of_N_active, string secret_id, int t){
   return shares;
 }
 
-/*string async_get_shares(vector<int> ids_of_N_active, string secret_id, string ip_address, int t){
+string async_get_shares(vector<int> ids_of_N_active, string secret_id, int t){
     int node_id;
     KVSClient* kvs;
     string shares = "";
     string share = "";
-    string fixed = ip_address+":";
     vector<string> strings_with_id_of_N_active = convert_ids_to_strings_with_id(ids_of_N_active, "server");
     vector<pair<string, uint32_t>> ordered_strings_with_id_to_hash = order_HRW(strings_with_id_of_N_active,secret_id); //Order according to HRW
     pair<string, uint32_t> pair; 
@@ -267,7 +323,7 @@ string get_shares(vector<int> ids_of_N_active, string secret_id, int t){
     for (int i = 0; i < t; i++){
         pair = ordered_strings_with_id_to_hash[i];
         node_id = extractNumber(pair.first);
-        stub = keyvaluestore::KVS::NewStub(grpc::CreateChannel(fixed+id_to_address_map[node_id] , grpc::InsecureChannelCredentials()));
+        stub = keyvaluestore::KVS::NewStub(grpc::CreateChannel(id_to_address_map[node_id]+":"+to_string(default_sms_port) , grpc::InsecureChannelCredentials()));
         rpc = stub->AsyncGet(&contexts[i], request, &cq);
         rpc->Finish(&responses[i], &statuses[i], (void*)(i+1));
     }
@@ -280,7 +336,8 @@ string get_shares(vector<int> ids_of_N_active, string secret_id, int t){
             int response_index = reinterpret_cast<intptr_t>(got_tag) - 1;
             if (statuses[response_index].ok()) {
                 share = responses[response_index].value();
-                //cout << "Got share from node id = " << extractNumber(ordered_strings_with_id_to_hash[response_index].first) <<" : " << share << endl;
+                //cout << share << endl;
+                //cout << "Got share from node id = " << extractNumber(ordered_strings_with_id_to_hash[response_index].first) <<" for key " << secret_id << " : "<< share << endl;
                 shares += share+'\n'; 
             } else {
                  std::cout << statuses[response_index].error_code() << ": " << statuses[response_index].error_message()
@@ -292,7 +349,7 @@ string get_shares(vector<int> ids_of_N_active, string secret_id, int t){
     }
 
     return shares;
-}*/
+}
 
 
 vector<int> get_ids_of_N_active(){
@@ -306,6 +363,7 @@ vector<int> get_ids_of_N_active(){
 }
 
 int cpt = 0;
+//int cpt_read = 0;
 
 
 namespace ycsbc {
@@ -326,11 +384,14 @@ class BasicDB : public DB {
     vector<pair<string, uint32_t>> ordered_strings_with_id_to_hash;
     ids_of_N_active = get_ids_of_N_active();
     if(ids_of_N_active.size() >= t){
-        string shares_string = get_shares(ids_of_N_active, key, t);
-
+        //string shares_string = get_shares(ids_of_N_active, key, t);
+        string shares_string = async_get_shares(ids_of_N_active, key, t);
+        //cout << shares_string << endl;
+        //cpt_read++;
+        //cout << cpt_read << endl;
     }else{
-        cout << "less than t=" << t << " SMS nodes are available. Please retry later." << endl;
-    } 
+        cout << "less than t=" << t << " SMS nodes are available. Please retry later." << endl;  
+    }
     
     return 0;
   }
@@ -347,21 +408,6 @@ class BasicDB : public DB {
              std::vector<KVPair> &values) {
     
     Insert(table, key, values);
-    
-    /*string reply;
-    KVSClient* kvs;
-    string k,v;
-    kvs = new KVSClient(grpc::CreateChannel("localhost:50001", grpc::InsecureChannelCredentials()));
-    //k= "yesss"+to_string(cpt);
-    k = key;
-    //v = "aghiles.ait-messaoud@insa-lyon.frqsqqqqqqqqqqqqqqsssssssss";
-    v = values[0].second;
-    //std::lock_guard<std::mutex> lock(mutex_);
-    reply = kvs->Put(k,v);
-    delete kvs;
-    cpt++;
-    //cout << "Result: " << reply << endl;
-    cout << cpt << endl;*/
 
     return 0;
   }
@@ -371,7 +417,6 @@ class BasicDB : public DB {
              std::vector<KVPair> &values) { 
     
      
-    //myMap["yesss"+to_string(cpt)] = "aghiles.ait-messaoud@insa-lyon.frqsqqqqqqqqqqqqqqsssssssss";
     seed_random();
     
     char** shares;
@@ -388,34 +433,35 @@ class BasicDB : public DB {
     if(ids_of_N_active.size() >= n){ // enough active SMS nodes
       k = key;
       
-      strncpy(secret, values[0].second.c_str(), sizeof(secret) - 1);
+      /*strncpy(secret, values[0].second.c_str(), sizeof(secret) - 1);
       secret[sizeof(secret) - 1] = '\0';
       
       strings_with_id_of_N_active = convert_ids_to_strings_with_id(ids_of_N_active, "server");
       //display_vector(strings_with_id_of_N_active);
       
-      ordered_strings_with_id_to_hash = order_HRW(strings_with_id_of_N_active,k); //Order according to HRW
+      ordered_strings_with_id_to_hash = order_HRW(strings_with_id_of_N_active,k);*/ //Order according to HRW
 
       vector<int> shares_x;
 
-      for(int i=0; i<n;i++){ //extract top-n nodes'id
+      /*for(int i=0; i<n;i++){ //extract top-n nodes'id
         auto pair = ordered_strings_with_id_to_hash[i];
         string server_with_id = pair.first;
         //cout << "ID: " << server_with_id << ", Hash: " << pair.second << endl;
         shares_x.push_back(extractNumber(server_with_id));
-
-      }
-      char ** shares = generate_share_strings(secret, n, t, shares_x);
-      //cout << " ( " << k << " , " << secret << " )\n" << endl;
-      transmit_shares(k, shares, shares_x);
-      //async_transmit_shares(k, shares, shares_x, ip_address);
-      //cout << "\n-------------------------------------------\n" << endl;
-      free_string_shares(shares, n);
+      }*/
+      //shares = generate_share_strings(secret, n, t, shares_x);
+      //transmit_shares(k, shares, shares_x, values[0]);
+      //cout << "wriiiiiiiiiiiiiiiiite" << endl;
+      transmit_shares_replica(k, shares, values[0].second);
+      //async_transmit_shares(k, shares, shares_x);
+      //async_transmit_shares_replica(k, shares, shares_x, values[0].second);
+      //free_string_shares(shares, n);
       
-      cpt++;
-      cout << cpt << endl;
+      //cpt++;
+      
 
     }else{
+      //cout << cpt << endl;
       cout << "less than n=" << n << " SMS nodes are available. Please retry later." << endl;
     }
     
