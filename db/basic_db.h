@@ -15,7 +15,11 @@
 #include <string>
 #include <mutex>
 #include <map>
+#include <vector>
 #include "core/properties.h"
+#include <chrono>
+#include <thread>
+
 
 using std::cout;
 using std::endl;
@@ -31,16 +35,61 @@ using json = nlohmann::json;
 using namespace std;
 map<string, string> myMap;
 int t=3;
-int n=5;
+int n=8;
+int N=10;
 int default_sms_port = 50000;
-map<int, string> id_to_address_map = {{1, "10.9.0.11"}, 
-                                   {2, "10.9.0.5"}, 
-                                   {3, "10.9.0.6"},
-                                   {4, "10.9.0.7"},
-                                   {5, "10.9.0.8"}
-                                   };
 
+//Update this list
+int ids_of_N_active[] = {1,2,3,4,5,6,7,8,9,10};
+vector<string>  strings_with_id_of_N_active = { "server1",
+                                                "server2",
+                                                "server3",
+                                                "server4",
+                                                "server5",
+                                                "server6",
+                                                "server7",
+                                                "server8",
+                                                "server9",
+                                                "server10"
+                                                };
+map<int, string> id_to_address_map = {{1, "10.0.0.15"}, 
+                                      {2, "10.0.0.4"}, 
+                                      {3, "10.0.0.10"},
+                                      {4, "10.0.0.11"},
+                                      {5, "10.0.0.12"},
+                                      {6, "10.0.0.9"},
+                                      {7, "10.0.0.20"},
+                                      {8, "10.0.0.21"},
+                                      {9, "10.0.0.22"},
+                                      {10,"10.0.0.23"}
+                                     };
+
+#define NUM_CHANNELS 8
+int cpt = 0;
+unique_ptr<keyvaluestore::KVS::Stub> stub;
+map<std::thread::id, unique_ptr<keyvaluestore::KVS::Stub>> threadIdtoStub; //rpc = threadIdtoStub[std::this_thread::get_id()]->AsyncPut(&context, request, &cq);
+map< std::thread::id, map<int , unique_ptr<keyvaluestore::KVS::Stub> > > threadIdtoMultipleStubs;
+
+grpc::SslCredentialsOptions ssl_opts;
+
+int cpt_put = 0;
+int cpt_get = 0;
+int total_put_latency = 0;
+int total_get_latency = 0; 
+int max_get_latency=0;
+int max_put_latency=0;
 //################################################################################################
+
+std::string readFile(const std::string& filename) {
+    std::ifstream file(filename);
+    if (!file) {
+        std::cerr << "Failed to open file: " << filename << std::endl;
+        return "";
+    }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+}
 
 class KVSClient {
  public:
@@ -179,7 +228,7 @@ map<int, string> parse_json(const string& file_location){
   }
 }*/
 
-void transmit_shares_replica(string k, char** shares, string& value){ //the share (x_share, y_share) is sent to node port offset+x_share
+void transmit_shares_replica(string k, string& value){ //the share (x_share, y_share) is sent to node port offset+x_share
   string v;
   string reply;
   KVSClient* kvs;
@@ -234,7 +283,7 @@ void async_transmit_shares(string k, char** shares, vector<int> x_shares){ //the
 
 }
 
-void async_transmit_shares_replica(string k, char** shares, vector<int> x_shares, string& value){ //the share (x_share, y_share) is sent to node port offset+x_share
+void async_transmit_shares_replica(string k, string& value){ 
   string v;
   string reply;
   KVSClient* kvs;
@@ -253,11 +302,11 @@ void async_transmit_shares_replica(string k, char** shares, vector<int> x_shares
     stub = keyvaluestore::KVS::NewStub(grpc::CreateChannel(id_to_address_map[i+1]+":"+to_string(default_sms_port), grpc::InsecureChannelCredentials()));
     rpc = stub->AsyncPut(&contexts[i], request, &cq);
     rpc->Finish(&responses[i], &statuses[i], (void*)(i+1));
-
-    //if(i==0) break;
+    //cout << "sent"  << i << endl;
   }
   int num_responses_received = 0;
   while (num_responses_received < n){
+    
     void* got_tag;
     bool ok = false;
     cq.Next(&got_tag, &ok);
@@ -271,10 +320,94 @@ void async_transmit_shares_replica(string k, char** shares, vector<int> x_shares
 
       }*/
       num_responses_received++;
+      //cout << "received "  << response_index+1 << endl;
       //if(num_responses_received = 1) break;
     }
   }
+  //cout << "end" << endl;
 
+}
+
+
+int transmitted = 0;
+void async_transmit_single_share(string k, string& value){ 
+  
+  CompletionQueue cq;
+  ClientContext context;
+  std::unique_ptr<grpc::ClientAsyncResponseReader<keyvaluestore::Value>> rpc;
+  keyvaluestore::KV_pair request;
+  keyvaluestore::Value response;
+  Status status;
+  
+  request.set_key(k);
+  request.set_value(value);
+
+  rpc = threadIdtoStub[std::this_thread::get_id()]->AsyncPut(&context, request, &cq);
+  rpc->Finish(&response, &status, (void*)1);
+  
+  
+  void* got_tag;
+  bool ok = false;
+  cq.Next(&got_tag, &ok);
+  if (ok){
+    if(status.ok()){
+      transmitted++;
+      //cout << "transmitted" << transmitted << endl;
+    }else{
+      cout << "transmitted" << transmitted << endl;
+    }
+      //cout << "sent ok"  << endl; 
+  }else{
+    
+  }
+}
+
+void async_transmit_single_share_multiple_nodes_hrw(string& k, string& value){ 
+  
+  //Order according to HRW
+  vector<pair<string, uint32_t>> ordered_strings_with_id_to_hash = order_HRW(strings_with_id_of_N_active,k); 
+
+  //extract top-n nodes
+  vector<int> ordered_node_ids;
+  for(int i=0; i<n;i++){ //extract top-n nodes'id
+      auto pair = ordered_strings_with_id_to_hash[i];
+      string server_with_id = pair.first;
+      ordered_node_ids.push_back(extractNumber(server_with_id));
+  }
+
+  //send requests
+  int sent = 0;
+  CompletionQueue cq;
+  vector<ClientContext> contexts(n);
+  std::unique_ptr<grpc::ClientAsyncResponseReader<keyvaluestore::Value>> rpc;
+  keyvaluestore::KV_pair request;
+  vector<keyvaluestore::Value> responses(n);
+  vector<Status> statuses(n);
+  request.set_key(k);
+  request.set_value(value);
+
+  for (int node_id: ordered_node_ids){
+    rpc = threadIdtoMultipleStubs[std::this_thread::get_id()][node_id]->AsyncPut(&contexts[sent], request, &cq);
+    rpc->Finish(&responses[sent], &statuses[sent], (void*)(sent+1));
+    sent++;
+    if(sent == n) break;
+  }
+
+  int num_responses_received = 0;
+  while (num_responses_received < n){
+    void* got_tag;
+    bool ok = false;
+    cq.Next(&got_tag, &ok);
+    if (ok){
+      num_responses_received++;
+    }
+  }
+
+  /*void* got_tag;
+  bool ok = false;
+  for(int i=0; i<n; i++){
+    cq.Next(&got_tag, &ok);
+  }*/
 }
 
 string get_shares(vector<int> ids_of_N_active, string secret_id, int t){
@@ -351,6 +484,91 @@ string async_get_shares(vector<int> ids_of_N_active, string secret_id, int t){
     return shares;
 }
 
+void async_get_single_share_multiple_machines(string& secret_id){
+    string shares="";
+    string share="";
+      //Order according to HRW
+    vector<pair<string, uint32_t>> ordered_strings_with_id_to_hash = order_HRW(strings_with_id_of_N_active,secret_id); 
+
+    //extract top-n nodes
+    vector<int> ordered_node_ids;
+    for(int i=0; i<n;i++){ //extract top-n nodes'id
+        auto pair = ordered_strings_with_id_to_hash[i];
+        string server_with_id = pair.first;
+        ordered_node_ids.push_back(extractNumber(server_with_id));
+    }
+
+    //send requests
+    int sent = 0;
+    CompletionQueue cq;
+    vector<ClientContext> contexts(n);
+    std::unique_ptr<grpc::ClientAsyncResponseReader<keyvaluestore::Value>> rpc;
+    keyvaluestore::Key request;
+    vector<keyvaluestore::Value> responses(n);
+    vector<Status> statuses(n);
+    request.set_key(secret_id);
+
+    for (int node_id: ordered_node_ids){
+      //cout << "to send to node_id " << node_id << endl;
+      rpc = threadIdtoMultipleStubs[std::this_thread::get_id()][node_id]->AsyncGet(&contexts[sent], request, &cq);
+      rpc->Finish(&responses[sent], &statuses[sent], (void*)(sent+1));
+      sent++;
+      if(sent == n) break;
+    }
+
+    int num_responses_received = 0;
+    while (num_responses_received < n){
+      void* got_tag;
+      bool ok = false;
+      cq.Next(&got_tag, &ok);
+      if (ok){
+        int response_index = reinterpret_cast<intptr_t>(got_tag) - 1;
+        if (statuses[response_index].ok()) {
+            share = responses[response_index].value();
+            shares += share+'\n'; 
+            
+        }
+      }
+      num_responses_received++;
+    }
+
+}
+
+string async_get_single_share(const string& secret_id){
+
+    string share = "";
+    CompletionQueue cq;
+    ClientContext context;
+    std::unique_ptr<grpc::ClientAsyncResponseReader<keyvaluestore::Value>> rpc;
+    keyvaluestore::Key request;
+    request.set_key(secret_id);
+    keyvaluestore::Value response;
+    Status status;
+    
+    //rpc = stub->AsyncGet(&context, request, &cq);
+    rpc = threadIdtoStub[std::this_thread::get_id()]->AsyncGet(&context, request, &cq);
+    rpc->Finish(&response, &status, (void*)(1));
+    
+    
+    void* got_tag;
+    bool ok = false;
+    cq.Next(&got_tag, &ok);
+    if (ok){
+        if (status.ok()) {
+            share = response.value();
+            //cout << share << endl;
+            //cout << "Got share from node id = " << extractNumber(ordered_strings_with_id_to_hash[response_index].first) <<" for key " << secret_id << " : "<< share << endl;
+        } else {
+              std::cout << status.error_code() << ": " << status.error_message()<< std::endl;
+        }
+    } else {
+    }
+    
+
+    return share;
+}
+
+
 
 vector<int> get_ids_of_N_active(){
   vector<int> result;
@@ -362,8 +580,7 @@ vector<int> get_ids_of_N_active(){
   return result;
 }
 
-int cpt = 0;
-//int cpt_read = 0;
+
 
 
 namespace ycsbc {
@@ -372,26 +589,61 @@ class BasicDB : public DB {
  public:
   void Init() {
     std::lock_guard<std::mutex> lock(mutex_);
+    if(cpt==0){
+      std::string server_cert = "server.crt";
+      ssl_opts.pem_root_certs = readFile(server_cert);
+    }
     cout << "A new thread begins working." << endl;
+    
+    //threadIdtoStub[std::this_thread::get_id()] = keyvaluestore::KVS::NewStub(grpc::CreateCustomChannel(id_to_address_map[1]+":"+to_string(default_sms_port), channel_creds, channel_args));
+    //Create channels
+    for(int node_id=1; node_id<N+1; node_id++){
+      cpt++;
+      grpc::ChannelArguments channel_args;
+      auto channel_creds = grpc::SslCredentials(ssl_opts);
+      channel_args.SetInt("channel_number", cpt);
+      channel_args.SetSslTargetNameOverride("server");
+      threadIdtoMultipleStubs[std::this_thread::get_id()][node_id] = keyvaluestore::KVS::NewStub(grpc::CreateCustomChannel(id_to_address_map[node_id]+":"+to_string(default_sms_port), channel_creds, channel_args));
+    }
+    
   }
 
   int Read(const std::string &table, const std::string &key,
            const std::vector<std::string> *fields,
            std::vector<KVPair> &result) {
+    string k = key;
 
-    vector<int> ids_of_N_active;
-    vector<string> strings_with_id_of_N_active;
-    vector<pair<string, uint32_t>> ordered_strings_with_id_to_hash;
-    ids_of_N_active = get_ids_of_N_active();
-    if(ids_of_N_active.size() >= t){
-        //string shares_string = get_shares(ids_of_N_active, key, t);
-        string shares_string = async_get_shares(ids_of_N_active, key, t);
-        //cout << shares_string << endl;
-        //cpt_read++;
-        //cout << cpt_read << endl;
-    }else{
-        cout << "less than t=" << t << " SMS nodes are available. Please retry later." << endl;  
-    }
+    //string shares_string = myMap[key];
+
+    //vector<int> ids_of_N_active;
+
+    //ids_of_N_active = {1};
+    //ids_of_N_active = get_ids_of_N_active();
+    //if(ids_of_N_active.size() >= t){
+        
+    //auto start_time = std::chrono::high_resolution_clock::now();
+    //string shares_string = async_get_shares(ids_of_N_active, key, t);
+    
+    //string shares_string = async_get_single_share(key);
+    async_get_single_share_multiple_machines(k);
+
+    //std::cout << shares_string << std::endl;
+
+    //auto end_time = std::chrono::high_resolution_clock::now();
+    //auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+    //cpt_get++;
+    //total_get_latency += duration.count();
+    /*auto latency = duration.count();
+    if(latency > max_get_latency) {
+        max_get_latency = latency;
+        std::cout << "Max latency Get: " << max_get_latency << " ms" << std::endl;
+    }*/
+    
+    //cout << shares_string << endl;
+    //cout << cpt_get << endl;
+    //}else{
+        //cout << "less than t=" << t << " SMS nodes are available. Please retry later." << endl;  
+    //}
     
     return 0;
   }
@@ -404,20 +656,14 @@ class BasicDB : public DB {
     
   }
 
+  
+
   int Update(const std::string &table, const std::string &key,
              std::vector<KVPair> &values) {
-    
-    Insert(table, key, values);
 
-    return 0;
-  }
-
-
-  int Insert(const std::string &table, const std::string &key,
-             std::vector<KVPair> &values) { 
-    
-     
     seed_random();
+
+    //myMap[key] = values[0].second;
     
     char** shares;
     vector<int> ids_of_N_active;
@@ -425,23 +671,22 @@ class BasicDB : public DB {
     vector<pair<string, uint32_t>> ordered_strings_with_id_to_hash;
     string k;
     string v;
-    char secret[200];
+    //char secret[200];
     string reply;
 
-    ids_of_N_active = get_ids_of_N_active();
-
-    if(ids_of_N_active.size() >= n){ // enough active SMS nodes
+    //ids_of_N_active = {1};
+    //ids_of_N_active = get_ids_of_N_active();
+    
+    //if(ids_of_N_active.size() >= n){ // enough active SMS nodes
       k = key;
       
       /*strncpy(secret, values[0].second.c_str(), sizeof(secret) - 1);
       secret[sizeof(secret) - 1] = '\0';
       
       strings_with_id_of_N_active = convert_ids_to_strings_with_id(ids_of_N_active, "server");
-      //display_vector(strings_with_id_of_N_active);
       
       ordered_strings_with_id_to_hash = order_HRW(strings_with_id_of_N_active,k);*/ //Order according to HRW
-
-      vector<int> shares_x;
+      //vector<int> shares_x;
 
       /*for(int i=0; i<n;i++){ //extract top-n nodes'id
         auto pair = ordered_strings_with_id_to_hash[i];
@@ -452,7 +697,33 @@ class BasicDB : public DB {
       //shares = generate_share_strings(secret, n, t, shares_x);
       //transmit_shares(k, shares, shares_x, values[0]);
       //cout << "wriiiiiiiiiiiiiiiiite" << endl;
-      transmit_shares_replica(k, shares, values[0].second);
+
+      //transmit_shares_replica(k, values[0].second);
+
+      //auto start_time = std::chrono::high_resolution_clock::now();
+
+      //async_transmit_shares_replica(k, values[0].second);
+      //async_transmit_single_share(k, values[0].second);
+      async_transmit_single_share_multiple_nodes_hrw(k, values[0].second);
+      //myMap[k]=values[0].second;
+      
+      //auto end_time = std::chrono::high_resolution_clock::now();
+      //auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+      //cpt_put++;
+      //total_put_latency += duration.count();
+      /*int latency = duration.count();
+
+      if(latency > max_put_latency) {
+            max_put_latency = latency;
+            std::cout << "Max latency Put: " << max_put_latency << " ms" << std::endl;
+        }*/
+      //std::cout << cpt_put << std::endl;
+      /*if(cpt_put>20000){
+        std::cout << "Avg latency Put: " << total_put_latency/cpt_put << " ms" << std::endl;
+      }*/
+      
+      
+
       //async_transmit_shares(k, shares, shares_x);
       //async_transmit_shares_replica(k, shares, shares_x, values[0].second);
       //free_string_shares(shares, n);
@@ -460,13 +731,27 @@ class BasicDB : public DB {
       //cpt++;
       
 
-    }else{
+    /*}else{
+      std::cout << "Crashhh" << std::endl;
+      std::cout << cpt_put << std::endl;
       //cout << cpt << endl;
-      cout << "less than n=" << n << " SMS nodes are available. Please retry later." << endl;
-    }
+      //cout << "less than n=" << n << " SMS nodes are available. Please retry later." << endl;
+    }*/
+    
     
 
     return 0;
+    
+  }
+
+
+  int Insert(const std::string &table, const std::string &key,
+             std::vector<KVPair> &values) { 
+    
+    Update(table, key, values);
+
+    return 0;
+
   }
 
   int Delete(const std::string &table, const std::string &key) {
